@@ -28,6 +28,7 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
     const key = cacheKey(op, webp)
     let resp: Response = await responseCache.get(key)
     if(resp){
+      resp.headers.set("Fly-Cache", "HIT")
       return resp
     }
     console.log("url:", JSON.stringify(op), key)
@@ -61,6 +62,7 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
       resp.headers.set("content-length", body.data.byteLength.toString())
 
       await responseCache.set(key, resp, { tags: [op.url.toString()], ttl: 3600 })
+      resp.headers.set("Fly-Cache", "MISS")
     }
     return resp
   }

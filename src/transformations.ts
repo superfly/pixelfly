@@ -21,17 +21,10 @@ export type WidthHeight = {
   height: Dimension | undefined
 }
 
-export enum ResizeMode {
-  scale = "scale",
-  fit = "fit",
-  limit = "limit"
-}
-
 export type ResizeOptions = {
   kernel?: Image.kernel,
-  fastShrinkOnLoad?: boolean,
-  mode?: ResizeMode
-} & Dimensions
+  fastShrinkOnLoad?: boolean
+} & Image.ResizeOptions & Dimensions
 
 export async function resizeOperation(img: Image) {
   return img;
@@ -53,27 +46,28 @@ export abstract class Transformer<T>{
 export type Transformations = (Transformer<any>[] | Transformer<any>)[]
 
 export class Resize extends Transformer<ResizeOptions>{
-  constructor(public opts: ResizeOptions) {
-    super("resize", opts)
+  constructor(public params: ResizeOptions) {
+    super("resize", params)
   }
   async exec(img: Image) {
-    const d = resolveDimensions(this.opts, img)
+    const d = resolveDimensions(this.params, img)
     //noop
     if (!d.width && !d.height) return img
-    img.resize(d.width, d.height, this.opts)
+    img = img.scale(d.width, d.height, this.params)
+    //img.resize(d.width, d.height, this.params)
     return img
   }
 }
 
 export class Crop extends Transformer<CropOptions>{
-  constructor(public opts: CropOptions) {
-    super('crop', opts)
+  constructor(public params: CropOptions) {
+    super('crop', params)
   }
 
   async exec(img: Image) {
-    const d = resolveDimensions(this.opts, img)
+    const d = resolveDimensions(this.params, img)
     if (!d.width && !d.height) return img
-    img.resize(d.width, d.height).crop(this.opts.anchor)
+    img.resize(d.width, d.height).crop(this.params.anchor)
     return img
   }
 }

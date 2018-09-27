@@ -7,6 +7,7 @@ export interface NamedTransformations {
   [key: string]: (Transformer<any> | Transformer<any>[])
 }
 export interface ImageServiceOptions {
+  rootPath?: string,
   transformations?: NamedTransformations,
   urlParser?: TransformURLParser,
   webp?: boolean
@@ -23,7 +24,7 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
     if (req.method !== "GET" && req.method !== "HEAD") {
       return new Response("Only GET/HEAD allowed", { status: 405 })
     }
-    const op = parser(new URL(req.url), opts && opts.transformations)
+    const op = parser(new URL(req.url), opts)
     const webp = !!(opts && opts.webp === true && webpAllowed(op, req))
     const key = cacheKey(op, webp)
     let resp: Response = await responseCache.get(key)
@@ -107,10 +108,17 @@ export interface TransformURL {
   transformations: Transformations
 }
 
-export type TransformURLParser = (url: URL, named?: NamedTransformations) => TransformURL
-export function defaultParser(url: URL, named?: NamedTransformations): TransformURL {
+export type TransformURLParser = (url: URL, opts?: ImageServiceOptions) => TransformURL
+export function defaultParser(url: URL, opts?: ImageServiceOptions): TransformURL {
   // format: /<transformation>[,<transformation>]/path/to/image.jpg
   //
+  const named = opts && opts.transformations
+
+  if(opts && opts.rootPath && url.pathname.startsWith(opts.rootPath)){
+    // strip off root of path
+    const path = url.pathname.substring(opts.rootPath.length - 1)
+    url = new URL(path, url)
+  }
   const part = url.pathname.substring(1, url.pathname.indexOf('/', 1))
   if (part === "/") {
     return { url: url, transformations: [] }

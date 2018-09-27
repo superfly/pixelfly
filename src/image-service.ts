@@ -8,7 +8,8 @@ export interface NamedTransformations {
 }
 export interface ImageServiceOptions {
   transformations?: NamedTransformations,
-  urlParser?: TransformURLParser
+  urlParser?: TransformURLParser,
+  webp?: boolean
 }
 export type FetchFn = (req: RequestInfo, init?: RequestInit) => Promise<Response>
 
@@ -23,27 +24,43 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
       return new Response("Only GET/HEAD allowed", { status: 405 })
     }
     const op = parser(new URL(req.url), opts && opts.transformations)
-    console.log("url:", JSON.stringify(op))
+    const webp = !!(opts && opts.webp === true && webpAllowed(op, req))
+    const key = cacheKey(op, webp)
+    let resp: Response = await responseCache.get(key)
+    if(resp){
+      return resp
+    }
+    console.log("url:", JSON.stringify(op), key)
 
     const breq = new Request(op.url.toString(), req)
-    let resp = await fetchFromCache(breq, origin)
-    if (req.method === "GET" && op.transformations.length > 0) {
+    resp = await fetchFromCache(breq, origin)
+    if (req.method === "GET" && (op.transformations.length > 0 || webp) ){
       let img = await loadImage(resp)
-      for (const t of op.transformations) {
-        if (t instanceof Array) {
-          for (const t2 of t) {
-            console.log("applying:", t2.name)
-            img = await t2.exec(img)
+      if(op.transformations) {
+        for (const t of op.transformations) {
+          if (t instanceof Array) {
+            for (const t2 of t) {
+              console.log("applying:", t2.name)
+              img = await t2.exec(img)
+            }
+          } else {
+            console.log("applying:", t.name)
+            img = await t.exec(img)
           }
-        } else {
-          console.log("applying:", t.name)
-          img = await t.exec(img)
         }
       }
 
+      if(webp){
+        img = img.webp()
+        resp.headers.set("content-type", "image/webp")
+      }else{
+        console.log("webp not allowed:", opts && opts.webp, op.url.pathname)
+      }
       const body = await img.toBuffer()
       resp = new Response(body.data, resp)
       resp.headers.set("content-length", body.data.byteLength.toString())
+
+      await responseCache.set(key, resp, { tags: [op.url.toString()], ttl: 3600 })
     }
     return resp
   }
@@ -59,7 +76,7 @@ async function fetchFromCache(req: Request, origin: FetchFn) {
   resp = await origin(req)
 
   if (resp.status === 200 && req.method === "GET") {
-    await responseCache.set(req.url, resp, { tags: [req.url] })
+    await responseCache.set(req.url, resp, { tags: [req.url], ttl: 3600 })
     resp.headers.set("Fly-Cache", "miss")
     return resp
   }
@@ -107,4 +124,27 @@ export function defaultParser(url: URL, named?: NamedTransformations): Transform
     url: url,
     transformations: transforms
   }
+}
+
+const webpTypes = /\.(jpe?g|png)(\?.*)?$/
+export function webpAllowed(op: TransformURL, req: Request){
+  const accept = req.headers.get("accept") || ""
+  if(
+    op.url.pathname.match(webpTypes) &&
+    accept.includes("image/webp")
+  ){
+    return true
+  }
+  return false
+}
+
+function cacheKey(op: TransformURL, webp: boolean){
+  const transforms = op.transformations && op.transformations.length > 0 ?
+    (<any>crypto).subtle.digestSync('sha-1', JSON.stringify(op.transformations), 'hex') : 
+    null
+  return [
+    op.url,
+    transforms,
+    webp
+  ].join("|")
 }

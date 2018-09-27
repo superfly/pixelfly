@@ -35,6 +35,7 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
 
     const breq = new Request(op.url.toString(), req)
     resp = await fetchFromCache(breq, origin)
+    if(!isImage(resp)) return resp
     if (req.method === "GET" && (op.transformations.length > 0 || webp) ){
       let img = await loadImage(resp)
       if(op.transformations) {
@@ -86,12 +87,19 @@ async function fetchFromCache(req: Request, origin: FetchFn) {
 }
 
 async function loadImage(resp: Response): Promise<Image> {
-  const contentType = resp.headers.get("Content-Type") || ""
-  if (!contentType.includes("image/")) {
-    throw new Error("Response wasn't an image: " + contentType)
+  if (!isImage(resp)) {
+    throw new Error("Response wasn't an image")
   }
   const raw = await resp.arrayBuffer()
   return new Image(raw)
+}
+
+function isImage(resp: Response): boolean{
+  const contentType = resp.headers.get("Content-Type") || ""
+  if (!contentType.includes("image/") || contentType.includes("image/gif")) {
+    return false
+  }
+  return true
 }
 
 export interface TransformURL {

@@ -6,11 +6,21 @@ import { responseCache } from "@fly/cache"
 export interface NamedTransformations {
   [key: string]: (Transformer<any> | Transformer<any>[])
 }
+export interface ImageOutputOptions
+{
+  [key: string]: any,
+  webp?: Image.WebpOptions,
+  png?: Image.PngOptions,
+  jpg?: Image.JpegOptions,
+  jpeg?: Image.JpegOptions
+}
+
 export interface ImageServiceOptions {
   rootPath?: string,
   transformations?: NamedTransformations,
   urlParser?: TransformURLParser,
-  webp?: boolean
+  webp?: boolean,
+  outputs?: ImageOutputOptions
 }
 export type FetchFn = (req: RequestInfo, init?: RequestInit) => Promise<Response>
 
@@ -32,10 +42,11 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
       resp.headers.set("Fly-Cache", "HIT")
       return resp
     }
-    console.log("url:", JSON.stringify(op), key)
+    //console.log("url:", JSON.stringify(op), key)
 
     const breq = new Request(op.url.toString(), req)
     resp = await fetchFromCache(breq, origin)
+    let start = Date.now()
     if(!isImage(resp)) return resp
     if (req.method === "GET" && (op.transformations.length > 0 || webp) ){
       let img = await loadImage(resp)
@@ -43,23 +54,26 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
         for (const t of op.transformations) {
           if (t instanceof Array) {
             for (const t2 of t) {
-              console.log("applying:", t2.name)
+              //console.log("applying:", t2.name)
               img = await t2.exec(img)
             }
           } else {
-            console.log("applying:", t.name)
+            //console.log("applying:", t.name)
             img = await t.exec(img)
           }
         }
       }
 
+
+      applyOutputOptions(img, opts && opts.outputs)
       if(webp){
-        img = img.webp()
+        img = img.webp({ force: true })
         resp.headers.set("content-type", "image/webp")
       }else{
-        console.log("webp not allowed:", opts && opts.webp, op.url.pathname)
+        //console.log("webp not allowed:", opts && opts.webp, op.url.pathname)
       }
       const body = await img.toBuffer()
+      //console.log("Image processing:", Date.now() - start)
       resp = new Response(body.data, resp)
       resp.headers.set("content-length", body.data.byteLength.toString())
 
@@ -69,18 +83,37 @@ export function imageService(origin: FetchFn | string, opts?: ImageServiceOption
     return resp
   }
 }
-
+function applyOutputOptions(img: Image, opts?: ImageOutputOptions){
+  if(!opts) return
+  for(const k of Object.getOwnPropertyNames(opts)){
+    const v = opts[k]
+    if(v){
+      opts[k] = Object.assign(v, { force: false })
+    }else{
+      opts[k] = { force: false }
+    }
+  }
+  if(opts.webp) img.webp(opts.webp)
+  const jpeg = opts.jpeg || opts.jpg
+  if(jpeg) img.jpeg(jpeg)
+  if(opts.png) img.png(opts.png)
+}
 async function fetchFromCache(req: Request, origin: FetchFn) {
+  let start = Date.now()
   let resp: Response = await responseCache.get(req.url)
   if (resp) {
     resp.headers.set("Fly-Cache", "hit")
+    //console.log(`Image fetch from cache (${Date.now() - start}):`, req.url)
     return resp
   }
 
   resp = await origin(req)
 
   if (resp.status === 200 && req.method === "GET") {
-    await responseCache.set(req.url, resp, { tags: [req.url], ttl: 3600 })
+    //console.log(`Image fetch from URL (${Date.now() - start}):`, req.url)
+    start = Date.now()
+    await responseCache.set(req.url, resp, { tags: [req.url], ttl: 3600 * 24 * 30 * 6 })
+    //console.log(`Image write to cache (${Date.now() - start}):`, req.url, resp.headers.get("content-length"))
     resp.headers.set("Fly-Cache", "miss")
     return resp
   }
@@ -92,7 +125,12 @@ async function loadImage(resp: Response): Promise<Image> {
     throw new Error("Response wasn't an image")
   }
   const raw = await resp.arrayBuffer()
-  return new Image(raw)
+  const img = new Image(raw)
+  
+  const meta = img.metadata()
+  console.log("Image:", meta)
+  
+  return img
 }
 
 function isImage(resp: Response): boolean{
@@ -135,7 +173,7 @@ export function defaultParser(url: URL, opts?: ImageServiceOptions): TransformUR
     }
   }
   if (transforms.length > 0) {
-    console.log(url.pathname.substr(part.length + 1))
+    //console.log(url.pathname.substr(part.length + 1))
     url = new URL(url.pathname.substr(part.length + 1), url)
   }
   return {

@@ -1,4 +1,5 @@
 import { Image } from "@fly/image"
+
 export type Dimension = number | string
 export type Dimensions = Width | Height | WidthHeight
 
@@ -26,22 +27,33 @@ export type ResizeOptions = {
   fastShrinkOnLoad?: boolean
 } & Image.ResizeOptions & Dimensions
 
-export async function resizeOperation(img: Image) {
-  return img;
+export interface Operation {
+  operation: String;
+  params: { [name: string]: any };
 }
 
 export interface TransformOp {
   (img: Image): Promise<Image>
 }
+
+export enum Gravity {
+  Center = "centre",
+  North = "north",
+  South = "south",
+  East = "east",
+  West = "west",
+  Smart = "smart",
+}
+
 export type CropOptions = {
-  anchor?: Image.gravity | Image.strategy
+  gravity: Gravity
 } & Dimensions
 
 export abstract class Transformer<T>{
   constructor(public name: string, public params: T) {
   }
 
-  abstract exec(img: Image): Promise<Image>
+  abstract operation(): Operation
 }
 export type Transformations = (Transformer<any>[] | Transformer<any>)[]
 
@@ -49,13 +61,15 @@ export class Resize extends Transformer<ResizeOptions>{
   constructor(public params: ResizeOptions) {
     super("resize", params)
   }
-  async exec(img: Image) {
-    const d = resolveDimensions(this.params, img)
-    //noop
-    if (!d.width && !d.height) return img
-    img = img.scale(d.width, d.height, this.params)
-    //img.resize(d.width, d.height, this.params)
-    return img
+
+  operation() {
+    return {
+      operation: "fit",
+      params: {
+        height: this.params.height,
+        width: this.params.width,
+      }
+    }
   }
 }
 
@@ -64,11 +78,15 @@ export class Crop extends Transformer<CropOptions>{
     super('crop', params)
   }
 
-  async exec(img: Image) {
-    const d = resolveDimensions(this.params, img)
-    if (!d.width && !d.height) return img
-    img.resize(d.width, d.height).crop(this.params.anchor)
-    return img
+  operation() {
+    return {
+      operation: "crop",
+      params: {
+        gravity: this.params.gravity,
+        height: this.params.height,
+        width: this.params.width,
+      }
+    }
   }
 }
 
@@ -95,7 +113,7 @@ export class Transform {
   }
 
   static smartCrop(width: Dimension, height?: Dimension): Crop {
-    return new Crop({ width: width, height: height, anchor: Image.strategy.entropy })
+    return new Crop({ width: width, height: height, gravity: Gravity.Smart })
   }
 }
 
@@ -109,24 +127,3 @@ function toDimensions(width?: Dimension, height?: Dimension): Dimensions {
   throw new Error("You must specify either a width or a height")
 }
 
-function resolveDimensions({ width, height }: Dimensions, reference: Image) {
-  let pctWidth = toPercent(width)
-  let pctHeight = toPercent(height)
-
-  if (pctWidth || pctHeight) {
-    const meta = reference.metadata()
-    if (pctWidth && meta.width) width = meta.width * pctWidth
-    if (pctHeight && meta.height) height = meta.height * pctHeight
-  }
-  // width and height should be number or undefined now
-  if (typeof width === "string") width = parseInt(width)
-  if (typeof height === "string") height = parseInt(height)
-  return { width, height }
-}
-
-function toPercent(d: Dimension | undefined) {
-  let pct: number | undefined
-  if (d && typeof d === "string" && d.endsWith("%") && !(isNaN(pct = parseInt(d)))) {
-    return (pct / 100)
-  }
-}
